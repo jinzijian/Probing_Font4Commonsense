@@ -7,14 +7,14 @@ import pandas as pd
 import csv
 import torch
 import argparse
-from transformers import XLMRobertaForSequenceClassification, XLMRobertaTokenizer, XLMRobertaModel
+from transformers import XLMRobertaForSequenceClassification, XLMRobertaTokenizer, XLMRobertaModel, XLMRobertaConfig
 from transformers import AdamW
 from transformers import get_linear_schedule_with_warmup
 from utils import *
 from transformers import AutoConfig, AutoModel, AutoTokenizer
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 import numpy as np
-
+from models import SeqClassification
 # Modify XLMR
 
 #args
@@ -27,6 +27,7 @@ parser.add_argument("--batch_size", type=int, default=16, help="batch_size")
 parser.add_argument("--lr", type=float, default=5e-6, help="learning rate")
 parser.add_argument("--eps", type=float, default=1e-8, help="adam_epsilon")
 parser.add_argument("--seed", type=int, default=0, help="adam_epsilon")
+parser.add_argument("--num_labels", type=int, default=3, help="num labels")
 args = parser.parse_args()
 
 #set seed
@@ -49,8 +50,14 @@ language_code = args.language_code
 language_index = args.language_index
 
 #set Model
-tokenizer = AutoTokenizer.from_pretrained("xlm-roberta-base" )
-plm_model =  XLMRobertaForSequenceClassification.from_pretrained("xlm-roberta-base", num_labels=3).to(device)
+tokenizer = XLMRobertaTokenizer.from_pretrained("xlm-roberta-base" )
+config = XLMRobertaConfig()
+plm_model =  SeqClassification(768, 3).to(device)
+model2 = XLMRobertaForSequenceClassification.from_pretrained("xlm-roberta-base", num_labels=3)
+model3 = XLMRobertaModel.from_pretrained("xlm-roberta-base")
+print(len(tokenizer))
+print(model2.config.vocab_size)
+print(model3.config.vocab_size)
 
 #dataset
 xnli_train_dataset = tfds.load(name='xnli', split="test")
@@ -170,8 +177,7 @@ for epoch_i in range(0, epochs):
                                   token_type_ids=None,
                                   attention_mask=b_input_mask,
                                   labels=b_labels)
-        loss = outputs.loss
-        logits = outputs.logits
+        loss, logits = outputs
         # Accumulate the training loss over all of the batches so that we can
         # calculate the average loss at the end. `loss` is a Tensor containing a
         # single value; the `.item()` function just returns the Python value
@@ -252,8 +258,7 @@ for epoch_i in range(0, epochs):
                                 token_type_ids=None,
                                 attention_mask=b_input_mask,
                                 labels=b_labels)
-            loss = outputs.loss
-            logits = outputs.logits
+            loss, logits = outputs
 
         # Accumulate the validation loss.
         total_eval_loss += loss.item()
@@ -353,8 +358,7 @@ for batch in test_dataloader:
                             token_type_ids=None,
                             attention_mask=b_input_mask,
                             labels=b_labels)
-        loss = outputs.loss
-        logits = outputs.logits
+        loss, logits = outputs
 
     # Accumulate the validation loss.
     total_eval_loss += loss.item()
