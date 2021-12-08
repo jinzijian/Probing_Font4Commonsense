@@ -53,11 +53,6 @@ language_index = args.language_index
 tokenizer = XLMRobertaTokenizer.from_pretrained("xlm-roberta-base" )
 config = XLMRobertaConfig()
 plm_model =  SeqClassification(768, 3).to(device)
-model2 = XLMRobertaForSequenceClassification.from_pretrained("xlm-roberta-base", num_labels=3)
-model3 = XLMRobertaModel.from_pretrained("xlm-roberta-base")
-print(len(tokenizer))
-print(model2.config.vocab_size)
-print(model3.config.vocab_size)
 
 #dataset
 xnli_train_dataset = tfds.load(name='xnli', split="test")
