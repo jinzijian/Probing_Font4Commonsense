@@ -20,8 +20,8 @@ from models import SeqClassification
 #args
 parser = argparse.ArgumentParser()
 parser.add_argument("--gpu", type=int, default=0, help="gpu")
-parser.add_argument("--language_code", type=str, default='zh', help="language code string")
-parser.add_argument("--language_index", type=int, default=14, help="language index")
+parser.add_argument("--language_code", type=str, default='vi', help="language code string")
+parser.add_argument("--language_index", type=int, default=13, help="language index")
 parser.add_argument("--epochs", type=int, default=30, help="learning rate")
 parser.add_argument("--batch_size", type=int, default=16, help="batch_size")
 parser.add_argument("--lr", type=float, default=5e-6, help="learning rate")
