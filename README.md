@@ -2,11 +2,15 @@
 
 - [x] Baseline Result
 
-- [ ] Convert text to image
+- [x] Convert text to image
 
 - [ ] CNN architecture
 
-- [ ] LSTM / Attention
+- [x] LSTM 
 
-- [ ] Combine together
+- [x] Combine together
+
+- [ ] Different LR
+
+- [ ] Attention / Transformer
 
