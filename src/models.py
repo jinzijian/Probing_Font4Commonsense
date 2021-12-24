@@ -46,8 +46,10 @@ from filelock import FileLock
 from huggingface_hub import HfFolder, Repository
 from transformers.utils.versions import importlib_metadata
 from transformers import XLMRobertaForSequenceClassification, XLMRobertaTokenizer, XLMRobertaModel, XLMRobertaConfig
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 configuration = XLMRobertaConfig()
+
 class SeqClassification(nn.Module):
     def __init__(self, input_dim, num_labels):
         super(SeqClassification, self).__init__()
@@ -87,6 +89,78 @@ class SeqClassification(nn.Module):
         sequence_output = outputs[0]
         sequence_output = sequence_output[:, :1, :]
         sequence_output = sequence_output.squeeze()
+        logits = self.classifier(sequence_output)
+        loss = None
+        loss_fct = nn.CrossEntropyLoss()
+        loss = loss_fct(logits, labels)
+
+        if not return_dict:
+            output = (logits,) + outputs[2:]
+            return ((loss,) + output) if loss is not None else output
+
+        return loss, logits
+
+
+
+class MixModel(nn.Module):
+    def __init__(self, input_dim, num_labels):
+        super(MixModel, self).__init__()
+        self.config = XLMRobertaConfig()
+        self.num_labels = num_labels
+        self.input_dim = input_dim
+        self.roberta = XLMRobertaModel.from_pretrained("xlm-roberta-base")
+        self.tokenizer = XLMRobertaTokenizer.from_pretrained("xlm-roberta-base" )
+        self.classifier = nn.Linear(self.input_dim * 2, self.num_labels)
+        self.conv1 = nn.Conv2d(3, 6, 5)
+        self.pool = nn.MaxPool2d(2, 2)
+        self.conv2 = nn.Conv2d(6, 16, 5)
+        self.lstm = nn.LSTM(768, 768, num_layers= 2, batch_first= True, bidirectional=True)
+
+    def forward(
+        self,
+        input_imgs=None,
+        input_ids=None,
+        attention_mask=None,
+        token_type_ids=None,
+        position_ids=None,
+        head_mask=None,
+        inputs_embeds=None,
+        labels=None,
+        output_attentions=None,
+        output_hidden_states=None,
+        return_dict=None,
+        seq_len = None,
+    ):
+        r"""
+        labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
+            Labels for computing the sequence classification/regression loss. Indices should be in :obj:`[0, ...,
+            config.num_labels - 1]`. If :obj:`config.num_labels == 1` a regression loss is computed (Mean-Square loss),
+            If :obj:`config.num_labels > 1` a classification loss is computed (Cross-Entropy).
+        """
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        strings = self.tokenizer.batch_decode(input_ids)
+        # input_img cnn -》 Batch * seqlength * 512
+        x = self.pool(F.relu(self.conv1(input_imgs)))
+        x = self.pool(F.relu(self.conv2(x)))
+
+        # Batch * 512 --> LSTM  ---> Batch * seqlength * 768
+        size = input_ids.size()
+        x = torch.reshape(x, (size[0], 400, -1)) #cnn output
+        x = pack_padded_sequence(x, seq_len,batch_first=True, enforce_sorted=False )
+        # get LSTM end  ---> Batch * 768
+        rnn_output, (hn, cn) = self.lstm(x)
+        hn = hn[2:]
+        hn = torch.mean(hn, 0)
+        outputs = self.roberta(
+            input_ids = input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            return_dict=return_dict
+        )
+        sequence_output = outputs[0]
+        sequence_output = sequence_output[:, :1, :]
+        sequence_output = sequence_output.squeeze()
+        sequence_output = torch.cat((sequence_output, hn), 1)
         logits = self.classifier(sequence_output)
         loss = None
         loss_fct = nn.CrossEntropyLoss()
