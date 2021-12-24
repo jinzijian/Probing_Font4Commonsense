@@ -58,7 +58,7 @@ class SeqClassification(nn.Module):
         self.input_dim = input_dim
         self.roberta = XLMRobertaModel.from_pretrained("xlm-roberta-base")
         self.classifier = nn.Linear(self.input_dim, self.num_labels)
-
+        self.dropout = nn.Dropout(p=0.3)
     def forward(
         self,
         input_ids=None,
@@ -111,9 +111,13 @@ class MixModel(nn.Module):
         self.roberta = XLMRobertaModel.from_pretrained("xlm-roberta-base")
         self.tokenizer = XLMRobertaTokenizer.from_pretrained("xlm-roberta-base" )
         self.classifier = nn.Linear(self.input_dim * 2, self.num_labels)
-        self.conv1 = nn.Conv2d(3, 6, 5)
         self.pool = nn.MaxPool2d(2, 2)
-        self.conv2 = nn.Conv2d(6, 16, 5)
+        self.conv1 = nn.Conv2d(3, 64, 5, stride = 2)
+        self.bn1 = nn.BatchNorm2d(64)
+        self.conv2 = nn.Conv2d(64, 256, 5)
+        self.bn2 = nn.BatchNorm2d(256)
+        self.conv3 = nn.Conv2d(256, 768, 5)
+        self.global_pool = nn.AdaptiveAvgPool2d((1,1))
         self.lstm = nn.LSTM(768, 768, num_layers= 2, batch_first= True, bidirectional=True)
 
     def forward(
@@ -140,9 +144,10 @@ class MixModel(nn.Module):
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
         strings = self.tokenizer.batch_decode(input_ids)
         # input_img cnn -》 Batch * seqlength * 512
-        x = self.pool(F.relu(self.conv1(input_imgs)))
-        x = self.pool(F.relu(self.conv2(x)))
-
+        x = self.pool(F.relu(self.bn1(self.conv1(input_imgs))))
+        x = self.pool(F.relu(self.bn2(self.conv2(x))))
+        x = self.global_pool(self.conv3(x))
+        x = torch.squeeze(x)
         # Batch * 512 --> LSTM  ---> Batch * seqlength * 768
         size = input_ids.size()
         x = torch.reshape(x, (size[0], 400, -1)) #cnn output
@@ -171,3 +176,13 @@ class MixModel(nn.Module):
             return ((loss,) + output) if loss is not None else output
 
         return loss, logits
+
+    def get_parameter(self, base_lr) -> "Parameter":
+        return [
+            {"params": self.roberta.parameters(), "lr": 1.0*base_lr},
+            {"params":self.cov1.parameters(),"lr":10*base_lr},
+            {"params": self.cov2.parameters(), "lr": 10 * base_lr},
+            {"params": self.cov3.parameters(), "lr": 10 * base_lr},
+            {"params": self.lstm.parameters(), "lr": 10 * base_lr},
+            {"params": self.classifier.parameters(), "lr": 10 * base_lr}
+        ]
