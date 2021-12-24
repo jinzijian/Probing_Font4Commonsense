@@ -4,9 +4,13 @@
 
 - [x] Convert text to image
 
-- [x] CNN architecture
+- [ ] CNN architecture
 
-- [x] LSTM / Attention
+- [x] LSTM 
 
 - [x] Combine together
+
+- [ ] Different LR
+
+- [ ] Attention / Transformer
 
