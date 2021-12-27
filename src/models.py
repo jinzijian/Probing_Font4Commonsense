@@ -40,7 +40,7 @@ from zipfile import ZipFile, is_zipfile
 import numpy as np
 from packaging import version
 from tqdm.auto import tqdm
-
+from transformers import BertTokenizer, BertModel
 import requests
 from filelock import FileLock
 from huggingface_hub import HfFolder, Repository
@@ -57,6 +57,7 @@ class SeqClassification(nn.Module):
         self.num_labels = num_labels
         self.input_dim = input_dim
         self.roberta = XLMRobertaModel.from_pretrained("xlm-roberta-base")
+        self.mbert = BertModel.from_pretrained("bert-base-multilingual-cased")
         self.classifier = nn.Linear(self.input_dim, self.num_labels)
         self.dropout = nn.Dropout(p=0.3)
     def forward(
@@ -71,6 +72,7 @@ class SeqClassification(nn.Module):
         output_attentions=None,
         output_hidden_states=None,
         return_dict=None,
+        args = None,
     ):
         r"""
         labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
@@ -80,12 +82,13 @@ class SeqClassification(nn.Module):
         """
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-        outputs = self.roberta(
-            input_ids = input_ids,
-            attention_mask=attention_mask,
-            token_type_ids=token_type_ids,
-            return_dict=return_dict
-        )
+        if args.plm == 'mroberta':
+            outputs = self.roberta(
+                input_ids = input_ids,
+                attention_mask=attention_mask,
+                token_type_ids=token_type_ids,
+                return_dict=return_dict
+            )
         sequence_output = outputs[0]
         sequence_output = sequence_output[:, :1, :]
         sequence_output = sequence_output.squeeze()
@@ -111,14 +114,17 @@ class MixModel(nn.Module):
         self.roberta = XLMRobertaModel.from_pretrained("xlm-roberta-base")
         self.tokenizer = XLMRobertaTokenizer.from_pretrained("xlm-roberta-base" )
         self.classifier = nn.Linear(self.input_dim * 2, self.num_labels)
+        self.conv1 = nn.Conv2d(3, 6, 5)
         self.pool = nn.MaxPool2d(2, 2)
-        self.conv1 = nn.Conv2d(3, 64, 5, stride = 2)
+        self.conv2 = nn.Conv2d(6, 16, 5)
+        self.conv1 = nn.Conv2d(3, 64, 5, stride=2)
         self.bn1 = nn.BatchNorm2d(64)
         self.conv2 = nn.Conv2d(64, 256, 5)
         self.bn2 = nn.BatchNorm2d(256)
         self.conv3 = nn.Conv2d(256, 768, 5)
-        self.global_pool = nn.AdaptiveAvgPool2d((1,1))
-        self.lstm = nn.LSTM(768, 768, num_layers= 2, batch_first= True, bidirectional=True)
+        self.global_pool = nn.AdaptiveAvgPool2d((1, 1))
+        self.lstm = nn.LSTM(768, 768, num_layers=2, batch_first=True, bidirectional=True)
+        self.dropout = nn.Dropout(0.5)
 
     def forward(
         self,
@@ -144,16 +150,19 @@ class MixModel(nn.Module):
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
         strings = self.tokenizer.batch_decode(input_ids)
         # input_img cnn -》 Batch * seqlength * 512
-        x = self.pool(F.relu(self.bn1(self.conv1(input_imgs))))
-        x = self.pool(F.relu(self.bn2(self.conv2(x))))
+        x = self.pool(F.relu(self.conv1(input_imgs)))
+        x = self.pool(F.relu(self.conv2(x)))
+
+        x = F.relu(self.bn1(self.conv1(input_imgs)))
+        x = F.relu(self.bn2(self.conv2(x)))
         x = self.global_pool(self.conv3(x))
         x = torch.squeeze(x)
         # Batch * 512 --> LSTM  ---> Batch * seqlength * 768
         size = input_ids.size()
-        x = torch.reshape(x, (size[0], 400, -1)) #cnn output
-        x = pack_padded_sequence(x, seq_len,batch_first=True, enforce_sorted=False )
+        x = torch.reshape(x, (size[0], 400, -1))  # cnn output
         # get LSTM end  ---> Batch * 768
         rnn_output, (hn, cn) = self.lstm(x)
+        hn = self.dropout(hn)
         hn = hn[2:]
         hn = torch.mean(hn, 0)
         outputs = self.roberta(
@@ -177,12 +186,13 @@ class MixModel(nn.Module):
 
         return loss, logits
 
+
     def get_parameter(self, base_lr) -> "Parameter":
         return [
             {"params": self.roberta.parameters(), "lr": 1.0*base_lr},
-            {"params":self.cov1.parameters(),"lr":10*base_lr},
-            {"params": self.cov2.parameters(), "lr": 10 * base_lr},
-            {"params": self.cov3.parameters(), "lr": 10 * base_lr},
+            {"params":self.conv1.parameters(),"lr":10*base_lr},
+            {"params": self.conv2.parameters(), "lr": 10 * base_lr},
+            {"params": self.conv3.parameters(), "lr": 10 * base_lr},
             {"params": self.lstm.parameters(), "lr": 10 * base_lr},
             {"params": self.classifier.parameters(), "lr": 10 * base_lr}
         ]

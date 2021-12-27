@@ -89,10 +89,16 @@ test_dataloader = DataLoader(
         )
 
 # optimizer
-optimizer = AdamW(plm_model.parameters(),
-                  lr = args.lr, # args.learning_rate
-                  eps = args.eps # args.adam_epsilon  - default is 1e-8.
-                )
+if args.cnn:
+    optimizer = AdamW(plm_model.get_parameter(args.lr),
+                      lr = args.lr, # args.learning_rate
+                      eps = args.eps # args.adam_epsilon  - default is 1e-8.
+                    )
+if not args.cnn:
+    optimizer = AdamW(plm_model.parameters(),
+                      lr=args.lr,  # args.learning_rate
+                      eps=args.eps  # args.adam_epsilon  - default is 1e-8.
+                      )
 
 # Number of training epochs.
 epochs = args.epochs
