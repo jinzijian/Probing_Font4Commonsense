@@ -1,13 +1,13 @@
 from PIL import Image, ImageDraw, ImageFont
 import cv2
-import numpy as np 
+import numpy as np
 import os
 import jieba
-import matplotlib.pyplot as plt 
+import matplotlib.pyplot as plt
 
 def text2img(word):
 	color = 0
-	img = np.ones([30,60,3],dtype = 'uint8')*255
+	img = np.ones([36,36,3],dtype = 'uint8')*255
 	img = Image.fromarray(cv2.cvtColor(img,cv2.COLOR_BGR2RGB))
 	draw = ImageDraw.Draw(img)
 
@@ -34,7 +34,7 @@ def create_samples(texts,is_word,maxlen):
 		if len(img)>maxlen:
 			img = img[:maxlen]
 		else:
-			img_ = np.ones([30,60,3],dtype = 'uint8')*255
+			img_ = np.ones([36,36,3],dtype = 'uint8')*255
 			img.extend([img_]*(maxlen-len(img)))
 
 		imgs.append(img)
