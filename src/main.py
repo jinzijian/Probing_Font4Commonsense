@@ -14,7 +14,7 @@ from utils import *
 from transformers import AutoConfig, AutoModel, AutoTokenizer
 from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 import numpy as np
-from models import SeqClassification, MixModel, mbert_base, mbert_cnn
+from models import SeqClassification, mroberta_cnn, mbert_base, mbert_cnn, cnn_base
 from create_img import create_samples
 # Modify XLMR
 import cv2
@@ -24,16 +24,17 @@ from transformers import BertTokenizer, BertModel
 #args
 parser = argparse.ArgumentParser()
 parser.add_argument("--gpu", type=int, default=2, help="gpu")
-parser.add_argument("--language_code", type=str, default='en', help="language code string")
-parser.add_argument("--language_index", type=int, default=4, help="language index")
+parser.add_argument("--language_code", type=str, default='zh', help="language code string")
+parser.add_argument("--language_index", type=int, default=14, help="language index")
 parser.add_argument("--epochs", type=int, default=30, help="learning rate")
 parser.add_argument("--batch_size", type=int, default=16, help="batch_size")
-parser.add_argument("--lr", type=float, default=5e-6, help="learning rate")
+parser.add_argument("--lr", type=float, default=1e-6, help="learning rate")
 parser.add_argument("--eps", type=float, default=1e-8, help="adam_epsilon")
 parser.add_argument("--seed", type=int, default=0, help="adam_epsilon")
 parser.add_argument("--num_labels", type=int, default=3, help="num labels")
 parser.add_argument("--cnn", type=bool, default=False, help="add cnn or not")
 parser.add_argument("--models", type=str, default='mroberta_base', help="type of PLMs")
+parser.add_argument("--alpha", type=int, default=4, help="type of lr of CNN part")
 parser.add_argument("--mode", type=str, default='word', help="type of spilit")
 args = parser.parse_args()
 
@@ -60,18 +61,23 @@ language_index = args.language_index
 #set Model
 if args.models == 'mroberta_base':
     tokenizer = XLMRobertaTokenizer.from_pretrained("xlm-roberta-base" )
-    plm_model = SeqClassification(768, 3).to(device)
+    plm_model = SeqClassification(args, 768, 3).to(device)
+    args.cnn = False
+if args.models == 'cnn':
+    tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-uncased')
+    plm_model = cnn_base(args, 768, 3).to(device)
+    args.cnn = True
 if args.models == 'mroberta_cnn':
     tokenizer = XLMRobertaTokenizer.from_pretrained("xlm-roberta-base")
-    plm_model = MixModel(768, 3).to(device)
+    plm_model = mroberta_cnn(args, 768, 3).to(device)
     args.cnn = True
 if args.models == 'mbert_base':
     tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-uncased')
-    plm_model = mbert_base(768, 3).to(device)
-
+    plm_model = mbert_base(args, 768, 3).to(device)
+    args.cnn = False
 if args.models == 'mbert_cnn':
     tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-uncased')
-    plm_model = mbert_cnn(768, 3).to(device)
+    plm_model = mbert_cnn(args, 768, 3).to(device)
     args.cnn = True
 #dataset
 xnli_train_dataset = tfds.load(name='xnli', split="test")
@@ -81,6 +87,12 @@ train_size = int(0.9 * len(train_dataset))
 val_size = len(train_dataset) - train_size
 train_dataset, val_dataset = random_split(train_dataset, [train_size, val_size])
 test_dataset = convert_dataset(args, xnli_test_dataset, tokenizer)
+super_test_dataset = convert_super_dataset(args, xnli_test_dataset, tokenizer)
+print("test size")
+print(len(test_dataset))
+print("super test size")
+print(len(super_test_dataset))
+
 
 #dataloader
 train_dataloader = DataLoader(
@@ -96,7 +108,13 @@ validation_dataloader = DataLoader(
 
 test_dataloader = DataLoader(
             test_dataset, # The validation samples.
-            sampler = SequentialSampler(val_dataset), # Pull out batches sequentially.
+            sampler = SequentialSampler(test_dataset), # Pull out batches sequentially.
+            batch_size = args.batch_size # Evaluate with this batch size.
+        )
+
+super_test_dataloader = DataLoader(
+            test_dataset, # The validation samples.
+            sampler = SequentialSampler(super_test_dataset), # Pull out batches sequentially.
             batch_size = args.batch_size # Evaluate with this batch size.
         )
 
@@ -111,6 +129,11 @@ if not args.cnn:
                       lr=args.lr,  # args.learning_rate
                       eps=args.eps  # args.adam_epsilon  - default is 1e-8.
                       )
+
+if args.mode == 'character':
+    maxlen = 400
+else:
+    maxlen = 400
 
 # Number of training epochs.
 epochs = args.epochs
@@ -193,10 +216,6 @@ for epoch_i in range(0, epochs):
         # Perform a forward pass (evaluate the model on this training batch).
         # This call returns the loss (because we provided labels) and the
         # "logits"--the model outputs prior to activation.
-        if args.mode == 'character':
-            maxlen = 1500
-        else:
-            maxlen = 400
 
         if args.cnn:
             #convert ids to text
@@ -380,17 +399,17 @@ for epoch_i in range(0, epochs):
             'Validation Time': validation_time
         }
     )
-    path_file_name = '/home/zijian/Probing_Font4Commonsense/src/epoch_result.txt'
+    path_file_name = '/home/zijian/Probing_Font4Commonsense/src/' + args.models + '_epoch_result.txt'
     if not os.path.exists(path_file_name):
-        fileObject = open('/home/zijian/Probing_Font4Commonsense/src/epoch_result.txt', 'w', encoding='utf-8')
+        fileObject = open('/home/zijian/Probing_Font4Commonsense/src/' + args.models + args.language_code + '_epoch_result.txt', 'a+', encoding='utf-8')
         fileObject.write(
-            'val ' +args.language_code + ' ' + args.models + ' ' + str(epoch_i + 1) + ' loss ' + str(avg_val_loss) + ' ' + str(args.mode) + ' ' + str(val_accuracy))
+            "alpha" + str(args.alpha) + "lr " + str(args.lr) + ' val ' +args.language_code + ' ' + args.models + ' ' + str(epoch_i + 1) + ' loss ' + str(avg_val_loss) + ' ' + str(args.mode) + ' ' + str(val_accuracy))
         fileObject.write('\n')
         fileObject.close()
     else:
-        fileObject = open('/home/zijian/Probing_Font4Commonsense/src/epoch_result.txt', 'a+', encoding='utf-8')
+        fileObject = open('/home/zijian/Probing_Font4Commonsense/src/' + args.models + args.language_code + '_epoch_result.txt', 'a+', encoding='utf-8')
         fileObject.write(
-            'val ' + args.language_code + ' ' + args.models + ' ' + str(epoch_i + 1) + ' loss ' + str(avg_val_loss) + ' ' + str(args.mode) + ' ' + str(val_accuracy))
+            "alpha" + str(args.alpha) + "lr " + str(args.lr) + ' val ' + args.language_code + ' ' + args.models + ' ' + str(epoch_i + 1) + ' loss ' + str(avg_val_loss) + ' ' + str(args.mode) + ' ' + str(val_accuracy))
         fileObject.write('\n')
         fileObject.close()
 
@@ -501,17 +520,137 @@ for epoch_i in range(0, epochs):
             'Test Time': validation_time
         }
     )
-    path_file_name = '/home/zijian/Probing_Font4Commonsense/src/epoch_result.txt'
+    path_file_name = '/home/zijian/Probing_Font4Commonsense/src/' + args.models + '_epoch_result.txt'
     if not os.path.exists(path_file_name):
-        fileObject = open('/home/zijian/Probing_Font4Commonsense/src/epoch_result.txt', 'w', encoding='utf-8')
+        fileObject = open('/home/zijian/Probing_Font4Commonsense/src/' + args.models + args.language_code + '_epoch_result.txt', 'a+', encoding='utf-8')
         fileObject.write(
-            'test ' + args.language_code + ' ' + args.models + ' ' + str(epoch_i + 1) + ' loss ' + str(avg_test_loss) + ' ' + str(args.mode) + ' ' + str(val_accuracy))
+            "alpha" + str(args.alpha) + "lr " + str(args.lr) + ' test ' + args.language_code + ' ' + args.models + ' ' + str(epoch_i + 1) + ' loss ' + str(avg_test_loss) + ' ' + str(args.mode) + ' ' + str(val_accuracy))
         fileObject.write('\n')
         fileObject.close()
     else:
-        fileObject = open('/home/zijian/Probing_Font4Commonsense/src/epoch_result.txt', 'a+', encoding='utf-8')
+        fileObject = open('/home/zijian/Probing_Font4Commonsense/src/' + args.models + args.language_code + '_epoch_result.txt', 'a+', encoding='utf-8')
         fileObject.write(
-            'test ' + args.language_code + ' ' + args.models + ' ' + str(epoch_i + 1) + ' loss ' + str(avg_test_loss) + ' ' + str(args.mode) + ' ' + str(val_accuracy))
+            "alpha" + str(args.alpha) + "lr " + str(args.lr) + 'test ' + args.language_code + ' ' + args.models + ' ' + str(epoch_i + 1) + ' loss ' + str(avg_test_loss) + ' ' + str(args.mode) + ' ' + str(val_accuracy))
+        fileObject.write('\n')
+        fileObject.close()
+    # Super Test Evaluate data for one epoch
+    print("Running Super Test for one epoch...")
+    t0 = time.time()
+    plm_model.eval()
+    # Tracking variables
+    total_test_loss = 0
+    predictions, true_labels = [], []
+    for batch in super_test_dataloader:
+        # Unpack this training batch from our dataloader.
+        #
+        # As we unpack the batch, we'll also copy each tensor to the GPU using
+        # the `to` method.
+        #
+        # `batch` contains three pytorch tensors:
+        #   [0]: input ids
+        #   [1]: attention masks
+        #   [2]: labels
+        b_input_ids = batch[0].to(device)
+        b_input_mask = batch[1].to(device)
+        b_labels = batch[2].to(device)
+
+        # Tell pytorch not to bother with constructing the compute graph during
+        # the forward pass, since this is only needed for backprop (training).
+        with torch.no_grad():
+            # Forward pass, calculate logit predictions.
+            # token_type_ids is the same as the "segment ids", which
+            # differentiates sentence 1 and 2 in 2-sentence tasks.
+            # The documentation for this `model` function is here:
+            # https://huggingface.co/transformers/v2.2.0/model_doc/bert.html#transformers.BertForSequenceClassification
+            # Get the "logits" output by the model. The "logits" are the output
+            # values prior to applying an activation function like the softmax.
+            if args.cnn:
+                # convert ids to text
+                input_text = tokenizer.batch_decode(b_input_ids, skip_special_tokens=True)
+                # 去掉s 去掉 pad
+                if args.mode == 'character':
+                    input_images, seq_len = create_samples(input_text, is_word=True, maxlen=maxlen)
+                else:
+                    input_images, seq_len = create_samples(input_text, is_word=False, maxlen=maxlen)
+                input_images = np.array(input_images)
+                input_images = np.reshape(input_images, (-1, 36, 36, 3))
+                input_images = input_images.transpose(0, 3, 1, 2)
+                input_images = torch.from_numpy(input_images).to(device)
+                input_images = input_images.float()
+                outputs = plm_model(input_images,
+                                    b_input_ids,
+                                    token_type_ids=None,
+                                    attention_mask=b_input_mask,
+                                    labels=b_labels,
+                                    seq_len=seq_len,
+                                    maxlen=maxlen)
+
+            if not args.cnn:
+                outputs = plm_model(b_input_ids,
+                                    token_type_ids=None,
+                                    attention_mask=b_input_mask,
+                                    labels=b_labels)
+            loss, logits = outputs
+
+        # Accumulate the validation loss.
+        total_test_loss += loss.item()
+
+        # Calculate the accuracy for this batch of test sentences.
+
+        # Move logits and labels to CPU
+        logits = logits.detach().cpu().numpy()
+        label_ids = b_labels.to('cpu').numpy()
+
+        # Store predictions and true labels
+        predictions.append(logits)
+        true_labels.append(label_ids)
+
+    # Measure validation accuracy...
+
+    # Combine the results across all batches.
+    flat_predictions = np.concatenate(predictions, axis=0)
+    flat_true_labels = np.concatenate(true_labels, axis=0)
+
+    # For each sample, pick the label (0, 1, or 2) with the highest score.
+    predicted_labels = np.argmax(flat_predictions, axis=1).flatten()
+
+    # Calculate the validation accuracy.
+    val_accuracy = (predicted_labels == flat_true_labels).mean()
+
+    # Report the final accuracy for this validation run.
+    print("  Accuracy: {0:.2f}".format(val_accuracy))
+
+    # Calculate the average loss over all of the batches.
+    avg_test_loss = total_test_loss / len(test_dataloader)
+
+    # Measure how long the validation run took.
+    validation_time = format_time(time.time() - t0)
+
+    print("  Test Loss: {0:.2f}".format(avg_val_loss))
+    print("  Test took: {:}".format(validation_time))
+
+    # Record all statistics from this epoch.
+    training_stats.append(
+        {
+            'epoch': epoch_i + 1,
+            'Training Loss': avg_train_loss,
+            'Valid. Loss': avg_test_loss,
+            'Valid. Accur.': val_accuracy,
+            'Training Time': training_time,
+            'Test Time': validation_time
+        }
+    )
+    path_file_name = '/home/zijian/Probing_Font4Commonsense/src/' + args.models + '_epoch_result.txt'
+    if not os.path.exists(path_file_name):
+        fileObject = open('/home/zijian/Probing_Font4Commonsense/src/' + args.models + args.language_code + '_epoch_result.txt', 'a+', encoding='utf-8')
+        fileObject.write(
+            "alpha" + str(args.alpha) + "lr " + str(args.lr) + ' supertest ' + args.language_code + ' ' + args.models + ' ' + str(epoch_i + 1) + ' loss ' + str(avg_test_loss) + ' ' + str(args.mode) + ' ' + str(val_accuracy))
+        fileObject.write('\n')
+        fileObject.close()
+    else:
+        fileObject = open('/home/zijian/Probing_Font4Commonsense/src/' + args.models + args.language_code + '_epoch_result.txt', 'a+', encoding='utf-8')
+        fileObject.write(
+            "alpha" + str(args.alpha) + "lr " + str(args.lr) + 'supertest ' + args.language_code + ' ' + args.models + ' ' + str(epoch_i + 1) + ' loss ' + str(avg_test_loss) + ' ' + str(args.mode) + ' ' + str(val_accuracy))
         fileObject.write('\n')
         fileObject.close()
 

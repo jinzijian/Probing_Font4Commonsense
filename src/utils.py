@@ -78,3 +78,44 @@ def convert_dataset(args, dataset, tokenizer):
     print('   DONE. {:,} examples.'.format(len(labels_tr)))
     dataset = TensorDataset(input_ids_tr, attn_masks_tr, labels_tr)
     return dataset
+
+def convert_super_dataset(args, dataset, tokenizer):
+    labels_tr = []
+    input_ids_tr = []
+    attn_masks_tr = []
+    max_len = 128
+    if(args.models == 'mroberta_base' or args.models == 'mroberta_cnn'):
+        unk = "<unk>"
+    else:
+        unk = "[UNK]"
+    unk_text = tokenizer.tokenize(unk)
+    unk_id = tokenizer.convert_tokens_to_ids(unk_text)[0]
+    for ex in dataset:
+        # Retrieve the premise and hypothesis strings.
+        premise = ex['premise'][args.language_code].numpy().decode("utf-8")
+        hypothesis = ex['hypothesis']['translation'][args.language_index].numpy().decode("utf-8")
+
+        # Convert sentence pairs to input IDs, with attention masks.
+        encoded_dict = tokenizer.encode_plus(premise, hypothesis,
+                                                  max_length=max_len,
+                                                  pad_to_max_length=True,
+                                                  truncation=True,
+                                                  return_tensors='pt')
+
+        # Add this example to our lists.
+        super_ids = encoded_dict['input_ids'].numpy()
+        if unk_id not in super_ids:
+            continue
+        input_ids_tr.append(encoded_dict['input_ids'])
+        attn_masks_tr.append(encoded_dict['attention_mask'])
+        labels_tr.append(ex['label'].numpy())
+
+    # Convert each Python list of Tensors into a 2D Tensor matrix.
+    input_ids_tr = torch.cat(input_ids_tr, dim=0)
+    attn_masks_tr = torch.cat(attn_masks_tr, dim=0)
+
+    # Cast the labels list to a Tensor.
+    labels_tr = torch.tensor(labels_tr)
+    print('   DONE. {:,} examples.'.format(len(labels_tr)))
+    dataset = TensorDataset(input_ids_tr, attn_masks_tr, labels_tr)
+    return dataset
